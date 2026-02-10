@@ -1,7 +1,8 @@
 /**
  * Market Geocoding Service
- * Uses Gemini 3 Flash via OpenRouter to determine geographic locations
- * for prediction markets. Processes markets in batches and caches results.
+ * Uses Kimi K2.5 via OpenRouter Responses API with web search
+ * to determine geographic locations for prediction markets.
+ * Processes markets in batches and caches results.
  */
 
 import {
@@ -10,8 +11,8 @@ import {
 } from "../db.js";
 import type Database from "better-sqlite3";
 
-const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
-const MODEL = "google/gemini-3-flash-preview";
+const OPENROUTER_URL = "https://openrouter.ai/api/v1/responses";
+const MODEL = "moonshotai/kimi-k2.5";
 const GEOCODE_TTL_DAYS = 7;
 const BATCH_SIZE = 10;
 
@@ -35,11 +36,14 @@ function buildBatchGeocodePrompt(
         .map((m) => `[${m.index}] "${m.question}" (category: ${m.category || "general"})`)
         .join("\n");
 
-    return `You are a geolocation classifier for prediction markets. For each market below, determine the PRIMARY geographic location most relevant to the market's subject matter.
+    return `You are a geographic classification specialist with web search capabilities. You determine the most relevant real-world location for prediction market questions. Use web search to verify current facts about people, events, and locations mentioned in these markets.
+
+For each market below, determine the PRIMARY geographic location most relevant to the market's subject matter.
 
 RULES:
+- USE WEB SEARCH to look up current information about the people, events, or topics in each market to determine the most accurate location
 - Pick the city/region most directly tied to the market's topic (e.g. a US politics market → Washington DC, a Ukraine war market → Kyiv, a crypto market → New York or San Francisco)
-- For person-specific markets, use the city most associated with their current role (e.g. a sitting US president → Washington DC)
+- For person-specific markets, search for the person's current role and location (e.g. a sitting US president → Washington DC, a CEO → their company's HQ city)
 - For global/abstract markets (e.g. "Will AI achieve X?"), pick the city of the most relevant institution or industry hub
 - Every market MUST get a location — never return null. Use your best judgment for ambiguous cases
 - Confidence: 90-100 = clearly about a specific place, 60-89 = reasonable geographic association, 30-59 = loosely associated
@@ -52,7 +56,7 @@ Respond with ONLY a valid JSON array, no markdown fences, no explanation:
 }
 
 // ============================================================================
-// LLM CALL
+// LLM CALL (OpenRouter Responses API + Web Search)
 // ============================================================================
 
 async function geocodeBatch(
@@ -77,25 +81,34 @@ async function geocodeBatch(
             },
             body: JSON.stringify({
                 model: MODEL,
-                messages: [
+                input: [
                     {
-                        role: "system",
-                        content: "You are a geographic classification specialist. You determine the most relevant real-world location for prediction market questions. You always respond with valid JSON arrays only, no markdown.",
+                        type: "message",
+                        role: "user",
+                        content: [
+                            {
+                                type: "input_text",
+                                text: prompt,
+                            },
+                        ],
                     },
-                    { role: "user", content: prompt },
                 ],
-                temperature: 0.1,
-                max_tokens: 4000,
+                plugins: [{ id: "web", max_results: 3 }],
+                max_output_tokens: 5000,
             }),
         });
 
         if (!response.ok) {
-            console.error("[geocoding] OpenRouter API error:", response.status);
+            console.error("[geocoding] OpenRouter Responses API error:", response.status);
             return [];
         }
 
         const json: any = await response.json();
-        const content = json.choices?.[0]?.message?.content?.trim();
+
+        // Responses API format: output[].content[].text
+        const msgOutput = json.output?.find((o: any) => o.type === "message");
+        const textContent = msgOutput?.content?.find((c: any) => c.type === "output_text");
+        const content = textContent?.text?.trim();
         if (!content) return [];
 
         const cleanContent = content.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();

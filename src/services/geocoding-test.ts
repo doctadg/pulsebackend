@@ -1,13 +1,14 @@
 /**
  * Geocoding Test Script
- * Fetches real markets from Polymarket and geocodes them via Gemini 3 Flash.
+ * Fetches real markets from Polymarket and geocodes them via Kimi K2.5
+ * using OpenRouter Responses API with web search.
  * Run: npx tsx src/services/geocoding-test.ts
  */
 
 import "dotenv/config";
 
-const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
-const MODEL = "google/gemini-3-flash-preview";
+const OPENROUTER_URL = "https://openrouter.ai/api/v1/responses";
+const MODEL = "moonshotai/kimi-k2.5";
 const GAMMA_API_BASE = "https://gamma-api.polymarket.com";
 const BUILDER_API_KEY = process.env.POLYMARKET_BUILDER_API_KEY || "019be474-bdb7-7d8d-9267-2d7322159eb4";
 
@@ -34,11 +35,14 @@ function buildBatchGeocodePrompt(markets: { index: number; question: string; des
         .map((m) => `[${m.index}] "${m.question}" (category: ${m.category || "general"})`)
         .join("\n");
 
-    return `You are a geolocation classifier for prediction markets. For each market below, determine the PRIMARY geographic location most relevant to the market's subject matter.
+    return `You are a geographic classification specialist with web search capabilities. You determine the most relevant real-world location for prediction market questions. Use web search to verify current facts about people, events, and locations mentioned in these markets.
+
+For each market below, determine the PRIMARY geographic location most relevant to the market's subject matter.
 
 RULES:
+- USE WEB SEARCH to look up current information about the people, events, or topics in each market to determine the most accurate location
 - Pick the city/region most directly tied to the market's topic (e.g. a US politics market → Washington DC, a Ukraine war market → Kyiv, a crypto market → New York or San Francisco)
-- For person-specific markets, use the city most associated with their current role (e.g. a sitting US president → Washington DC)
+- For person-specific markets, search for the person's current role and location (e.g. a sitting US president → Washington DC, a CEO → their company's HQ city)
 - For global/abstract markets (e.g. "Will AI achieve X?"), pick the city of the most relevant institution or industry hub
 - Every market MUST get a location — never return null. Use your best judgment for ambiguous cases
 - Confidence: 90-100 = clearly about a specific place, 60-89 = reasonable geographic association, 30-59 = loosely associated
@@ -66,25 +70,34 @@ async function geocodeBatch(markets: { index: number; question: string; descript
         },
         body: JSON.stringify({
             model: MODEL,
-            messages: [
+            input: [
                 {
-                    role: "system",
-                    content: "You are a geographic classification specialist. You determine the most relevant real-world location for prediction market questions. You always respond with valid JSON arrays only, no markdown.",
+                    type: "message",
+                    role: "user",
+                    content: [
+                        {
+                            type: "input_text",
+                            text: prompt,
+                        },
+                    ],
                 },
-                { role: "user", content: prompt },
             ],
-            temperature: 0.1,
-            max_tokens: 4000,
+            plugins: [{ id: "web", max_results: 3 }],
+            max_output_tokens: 5000,
         }),
     });
 
     if (!response.ok) {
         const errBody = await response.text();
-        throw new Error(`OpenRouter API error: ${response.status} — ${errBody}`);
+        throw new Error(`OpenRouter Responses API error: ${response.status} — ${errBody}`);
     }
 
     const json: any = await response.json();
-    const content = json.choices?.[0]?.message?.content?.trim();
+
+    // Responses API format: output[].content[].text
+    const msgOutput = json.output?.find((o: any) => o.type === "message");
+    const textContent = msgOutput?.content?.find((c: any) => c.type === "output_text");
+    const content = textContent?.text?.trim();
     if (!content) throw new Error("Empty response from AI model");
 
     const cleanContent = content.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
@@ -96,6 +109,7 @@ async function geocodeBatch(markets: { index: number; question: string; descript
 async function main() {
     console.log(`\n🌍 PulseGlobus Geocoding Test`);
     console.log(`   Model: ${MODEL}`);
+    console.log(`   API: Responses API + Web Search Plugin`);
     console.log(`   Fetching real markets from Polymarket...\n`);
 
     const rawMarkets = await fetchRealMarkets(50);
@@ -133,7 +147,6 @@ async function main() {
     }
 
     // ─── Results Summary ───────────────────────────────────────
-
     console.log(`\n${"═".repeat(100)}`);
     console.log(`GEOCODING RESULTS: ${allResults.length}/${rawMarkets.length} markets geocoded`);
     console.log(`${"═".repeat(100)}\n`);
@@ -151,7 +164,6 @@ async function main() {
     }
 
     // ─── Stats ─────────────────────────────────────────────────
-
     const confidences = allResults.map((r) => r.confidence);
     const avgConfidence = confidences.reduce((a, b) => a + b, 0) / confidences.length;
     const highConf = confidences.filter((c) => c >= 70).length;
@@ -190,3 +202,4 @@ async function main() {
 }
 
 main().catch(console.error);
+
