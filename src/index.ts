@@ -17,6 +17,7 @@ import { syncKalshi } from "./services/kalshi.js";
 import { autoMatchMarkets } from "./services/matching.js";
 import { autoGeocodeMarkets } from "./services/geocoding.js";
 import { createWhaleRoutes } from "./routes/whales.js";
+import { createWatchlistRoutes } from "./routes/watchlist.js";
 
 const PORT = parseInt(process.env.PORT || "3001");
 const app = express();
@@ -27,7 +28,7 @@ app.use(cors({
     origin: process.env.CORS_ORIGIN
         ? process.env.CORS_ORIGIN.split(",")
         : ["http://localhost:5173", "http://localhost:5174", "http://localhost:3000"],
-    methods: ["GET", "POST"],
+    methods: ["GET", "POST", "DELETE"],
 }));
 
 app.use(express.json());
@@ -41,6 +42,7 @@ const db = getDb();
 app.use("/api/markets", createMarketRoutes(db));
 app.use("/api/kalshi", createKalshiRoutes(db));
 app.use("/api/whales", createWhaleRoutes());
+app.use("/api/watchlist", createWatchlistRoutes());
 
 // Health check
 app.get("/api/health", (_req, res) => {
@@ -115,6 +117,7 @@ async function startup() {
         console.log(`[startup] Whales: http://localhost:${PORT}/api/whales`);
         console.log(`[startup] Kalshi: http://localhost:${PORT}/api/kalshi`);
         console.log(`[startup] Health: http://localhost:${PORT}/api/health`);
+        console.log(`[startup] Watchlist: http://localhost:${PORT}/api/watchlist`);
     });
 
     // Initial Polymarket sync
