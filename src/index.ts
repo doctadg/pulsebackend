@@ -16,6 +16,7 @@ import { autoSummarizeTopMarkets } from "./services/summary.js";
 import { syncKalshi } from "./services/kalshi.js";
 import { autoMatchMarkets } from "./services/matching.js";
 import { autoGeocodeMarkets } from "./services/geocoding.js";
+import { createWhaleRoutes } from "./routes/whales.js";
 
 const PORT = parseInt(process.env.PORT || "3001");
 const app = express();
@@ -39,6 +40,7 @@ const db = getDb();
 
 app.use("/api/markets", createMarketRoutes(db));
 app.use("/api/kalshi", createKalshiRoutes(db));
+app.use("/api/whales", createWhaleRoutes());
 
 // Health check
 app.get("/api/health", (_req, res) => {
@@ -106,6 +108,15 @@ async function startup() {
 ╚══════════════════════════════════════════╝
   `);
 
+    // Start listening immediately so requests are served while syncs run
+    app.listen(PORT, () => {
+        console.log(`[startup] Server listening on http://localhost:${PORT}`);
+        console.log(`[startup] API: http://localhost:${PORT}/api/markets`);
+        console.log(`[startup] Whales: http://localhost:${PORT}/api/whales`);
+        console.log(`[startup] Kalshi: http://localhost:${PORT}/api/kalshi`);
+        console.log(`[startup] Health: http://localhost:${PORT}/api/health`);
+    });
+
     // Initial Polymarket sync
     try {
         console.log("[startup] Running initial Polymarket sync...");
@@ -143,13 +154,6 @@ async function startup() {
     } catch (err) {
         console.error("[startup] Geocoding failed:", err);
     }
-
-    app.listen(PORT, () => {
-        console.log(`[startup] Server listening on http://localhost:${PORT}`);
-        console.log(`[startup] API: http://localhost:${PORT}/api/markets`);
-        console.log(`[startup] Kalshi: http://localhost:${PORT}/api/kalshi`);
-        console.log(`[startup] Health: http://localhost:${PORT}/api/health`);
-    });
 }
 
 startup();
